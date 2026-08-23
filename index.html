@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>横スクロールランナー</title>
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+    background: linear-gradient(135deg, #232526, #414345);
+    color: #fff;
+    padding: 16px;
+  }
+
+  h1 {
+    margin: 0 0 12px;
+    letter-spacing: 0.06em;
+    text-shadow: 2px 2px 6px rgba(0,0,0,0.4);
+  }
+
+  .info {
+    display: flex;
+    gap: 24px;
+    background: rgba(255,255,255,0.12);
+    padding: 8px 26px;
+    border-radius: 12px;
+    margin-bottom: 14px;
+    font-size: 16px;
+    font-weight: bold;
+    backdrop-filter: blur(4px);
+  }
+
+  .info span {
+    color: #ffd166;
+  }
+
+  .board-wrap {
+    position: relative;
+    max-width: 100%;
+  }
+
+  canvas#game {
+    background: #87ceeb;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    display: block;
+    max-width: 100%;
+    touch-action: none;
+  }
+
+  .overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20,20,30,0.75);
+    border-radius: 10px;
+    text-align: center;
+    gap: 14px;
+  }
+
+  .overlay.hidden {
+    display: none;
+  }
+
+  .overlay h2 {
+    margin: 0;
+    font-size: 24px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.6);
+  }
+
+  .overlay p {
+    margin: 0;
+    font-size: 13px;
+    opacity: 0.95;
+    line-height: 1.7;
+    max-width: 260px;
+    text-shadow: 1px 1px 3px rgba(0,0,0,0.6);
+  }
+
+  #startBtn {
+    padding: 10px 26px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 30px;
+    background: #ff9800;
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    transition: transform 0.1s;
+  }
+
+  #startBtn:active {
+    transform: scale(0.95);
+  }
+
+  .hint {
+    margin-top: 14px;
+    font-size: 12px;
+    opacity: 0.8;
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  .touch-controls {
+    display: none;
+    margin-top: 16px;
+    gap: 12px;
+  }
+
+  .touch-controls button {
+    padding: 14px 28px;
+    font-size: 15px;
+    font-weight: bold;
+    border: none;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.18);
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .touch-controls button:active {
+    background: rgba(255,255,255,0.35);
+  }
+
+  @media (max-width: 600px) {
+    .touch-controls {
+      display: flex;
+    }
+  }
+</style>
+</head>
+<body>
+
+  <h1>🏃 横スクロールランナー</h1>
+
+  <div class="info">
+    <div>スコア: <span id="score">0</span></div>
+    <div>残機: <span id="livesDisplay">🏃🏃🏃</span></div>
+    <div>ハイスコア: <span id="highScore">0</span></div>
+  </div>
+
+  <div class="board-wrap">
+    <canvas id="game" width="640" height="320"></canvas>
+
+    <div class="overlay" id="overlay">
+      <h2 id="overlayTitle">横スクロールランナー</h2>
+      <p>スペース/↑/タップでジャンプ、↓/スワイプでしゃがみ。<br>障害物にぶつかると残機が1つ減ります。残機が0になったらゲームオーバー。</p>
+      <button id="startBtn">スタート</button>
+    </div>
+  </div>
+
+  <div class="hint">スペース/↑ でジャンプ、↓ キーでしゃがみ(長押し)</div>
+
+  <div class="touch-controls">
+    <button id="btnJump">⬆ ジャンプ</button>
+    <button id="btnDuck">⬇ しゃがむ</button>
+  </div>
+
+<script>
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const livesDisplayEl = document.getElementById('livesDisplay');
+  const highScoreEl = document.getElementById('highScore');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlayTitle');
+  const startBtn = document.getElementById('startBtn');
+
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
+  const GROUND_Y = HEIGHT - 40;
+  const MAX_LIVES = 3;
+
+  const GRAVITY = 0.6;
+  const JUMP_VELOCITY = -12.5;
+
+  const player = {
+    x: 70,
+    y: GROUND_Y,
+    width: 34,
+    height: 44,
+    duckHeight: 26,
+    vy: 0,
+    isJumping: false,
+    isDucking: false,
+    runFrame: 0
+  };
+
+  let obstacles = [];
+  let clouds = [];
+  let groundOffset = 0;
+
+  let score = 0;
+  let highScore = 0;
+  let lives = MAX_LIVES;
+  let invincible = false;
+  let speed = 6;
+  let spawnTimer = 0;
+  let spawnInterval = 90;
+  let gameRunning = false;
+  let animationId = null;
+  let frameCount = 0;
+
+  function updateLivesDisplay() {
+    livesDisplayEl.textContent = '🏃'.repeat(Math.max(lives, 0)) || 'なし';
+  }
+
+  function resetGame() {
+    player.y = GROUND_Y;
+    player.vy = 0;
+    player.isJumping = false;
+    player.isDucking = false;
+    obstacles = [];
+    clouds = [];
+    for (let i = 0; i < 3; i++) {
+      clouds.push({
+        x: Math.random() * WIDTH,
+        y: 30 + Math.random() * 60,
+        size: 20 + Math.random() * 20
+      });
+    }
+    score = 0;
+    lives = MAX_LIVES;
+    invincible = false;
+    speed = 6;
+    spawnTimer = 0;
+    spawnInterval = 90;
+    frameCount = 0;
+    scoreEl.textContent = score;
+    updateLivesDisplay();
+  }
+
+  function playerHeight() {
+    return player.isDucking && !player.isJumping ? player.duckHeight : player.height;
+  }
+
+  function jump() {
+    if (!gameRunning) return;
+    if (!player.isJumping) {
+      player.vy = JUMP_VELOCITY;
+      player.isJumping = true;
+      playJumpSound();
+    }
+  }
+
+  function setDuck(state) {
+    player.isDucking = state;
+  }
+
+  function spawnObstacle() {
+    const isFlying = Math.random() < 0.3 && score > 150;
+
+    if (isFlying) {
+      obstacles.push({
+        type: 'bird',
+        x: WIDTH + 20,
+        y: GROUND_Y - 40 + Math.random() * 50,
+        width: 34,
+        height: 24
+      });
+    } else {
+      const isTall = Math.random() < 0.4;
+      const h = isTall ? 44 : 32;
+      obstacles.push({
+        type: 'cactus',
+        x: WIDTH + 20,
+        y: GROUND_Y + player.height - h,
+        width: isTall ? 20 : 26,
+        height: h
+      });
+    }
+  }
+
+  function updatePlayer() {
+    player.vy += GRAVITY;
+    player.y += player.vy;
+
+    if (player.y >= GROUND_Y) {
+      player.y = GROUND_Y;
+      player.vy = 0;
+      player.isJumping = false;
+    }
+
+    player.runFrame += 1;
+  }
+
+  function updateObstacles() {
+    spawnTimer++;
+    if (spawnTimer > spawnInterval) {
+      spawnObstacle();
+      spawnTimer = 0;
+      spawnInterval = Math.max(45, 90 - Math.floor(score / 20));
+    }
+
+    obstacles.forEach(obs => {
+      obs.x -= speed;
+    });
+
+    obstacles = obstacles.filter(obs => obs.x + obs.width > -20);
+  }
+
+  function checkCollision() {
+    if (invincible) return false;
+    const h = playerHeight();
+
+    for (const obs of obstacles) {
+      const px1 = player.x + 5;
+      const px2 = player.x + player.width - 5;
+      const pTopY = player.isDucking && !player.isJumping
+        ? player.y + (player.height - player.duckHeight)
+        : player.y;
+      const pBottomY = pTopY + h;
+
+      const ox1 = obs.x;
+      const ox2 = obs.x + obs.width;
+      const oy1 = obs.y;
+      const oy2 = obs.y + obs.height;
+
+      const overlapX = px1 < ox2 && px2 > ox1;
+      const overlapY = pTopY < oy2 && pBottomY > oy1;
+
+      if (overlapX && overlapY) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function drawGround() {
+    ctx.strokeStyle = '#5d4037';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, GROUND_Y + player.height);
+    ctx.lineTo(WIDTH, GROUND_Y + player.height);
+    ctx.stroke();
+
+    ctx.strokeStyle = 'rgba(93,64,55,0.5)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 20; i++) {
+      const x = (i * 40 - (groundOffset % 40));
+      ctx.beginPath();
+      ctx.moveTo(x, GROUND_Y + player.height + 6);
+      ctx.lineTo(x + 16, GROUND_Y + player.height + 6);
+      ctx.stroke();
+    }
+  }
+
+  function drawClouds() {
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    clouds.forEach(cloud => {
+      ctx.beginPath();
+      ctx.arc(cloud.x, cloud.y, cloud.size * 0.6, 0, Math.PI * 2);
+      ctx.arc(cloud.x + cloud.size * 0.6, cloud.y + 4, cloud.size * 0.5, 0, Math.PI * 2);
+      ctx.arc(cloud.x - cloud.size * 0.6, cloud.y + 4, cloud.size * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+
+  function drawPlayer() {
+    if (invincible && Math.floor(Date.now() / 100) % 2 === 0) return;
+
+    const h = playerHeight();
+    const topY = player.isDucking && !player.isJumping
+      ? player.y + (player.height - player.duckHeight)
+      : player.y;
+
+    ctx.fillStyle = '#2f3542';
+    ctx.beginPath();
+    ctx.roundRect(player.x, topY, player.width, h, 8);
+    ctx.fill();
+
+    // 目
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(player.x + player.width - 10, topY + 12, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#2f3542';
+    ctx.beginPath();
+    ctx.arc(player.x + player.width - 9, topY + 12, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 足の動き(走っているアニメーション)
+    if (!player.isJumping) {
+      const legPhase = Math.floor(player.runFrame / 6) % 2;
+      ctx.fillStyle = '#2f3542';
+      const legY = topY + h;
+      if (legPhase === 0) {
+        ctx.fillRect(player.x + 4, legY, 6, 8);
+        ctx.fillRect(player.x + player.width - 12, legY, 6, 4);
+      } else {
+        ctx.fillRect(player.x + 4, legY, 6, 4);
+        ctx.fillRect(player.x + player.width - 12, legY, 6, 8);
+      }
+    }
+  }
+
+  function drawObstacles() {
+    obstacles.forEach(obs => {
+      if (obs.type === 'cactus') {
+        ctx.fillStyle = '#2e7d32';
+        ctx.beginPath();
+        ctx.roundRect(obs.x, obs.y, obs.width, obs.height, 4);
+        ctx.fill();
+        ctx.fillStyle = '#388e3c';
+        ctx.fillRect(obs.x - 5, obs.y + 8, 6, 10);
+        ctx.fillRect(obs.x + obs.width - 1, obs.y + 14, 6, 10);
+      } else {
+        const wingUp = Math.floor(frameCount / 8) % 2 === 0;
+        ctx.fillStyle = '#455a64';
+        ctx.beginPath();
+        ctx.ellipse(obs.x + obs.width / 2, obs.y + obs.height / 2, obs.width / 2, obs.height / 2.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#455a64';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        if (wingUp) {
+          ctx.moveTo(obs.x + 4, obs.y + obs.height / 2);
+          ctx.lineTo(obs.x + obs.width / 2, obs.y - 6);
+          ctx.lineTo(obs.x + obs.width - 4, obs.y + obs.height / 2);
+        } else {
+          ctx.moveTo(obs.x + 4, obs.y + obs.height / 2);
+          ctx.lineTo(obs.x + obs.width / 2, obs.y + obs.height + 6);
+          ctx.lineTo(obs.x + obs.width - 4, obs.y + obs.height / 2);
+        }
+        ctx.stroke();
+      }
+    });
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    // 空のグラデーション
+    const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+    gradient.addColorStop(0, '#74b9ff');
+    gradient.addColorStop(1, '#a9dfff');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    drawClouds();
+    drawGround();
+    drawObstacles();
+    drawPlayer();
+  }
+
+  function update() {
+    frameCount++;
+    updatePlayer();
+    updateObstacles();
+    groundOffset += speed;
+
+    clouds.forEach(cloud => {
+      cloud.x -= speed * 0.3;
+      if (cloud.x < -40) {
+        cloud.x = WIDTH + 40;
+        cloud.y = 30 + Math.random() * 60;
+      }
+    });
+
+    score += 1;
+    if (score % 5 === 0) {
+      scoreEl.textContent = score;
+    }
+
+    if (score % 300 === 0 && score > 0) {
+      speed += 0.5;
+      playMilestoneSound();
+    }
+
+    if (checkCollision()) {
+      loseLife();
+    }
+  }
+
+  function loseLife() {
+    lives--;
+    updateLivesDisplay();
+    playCrashSound();
+
+    if (lives <= 0) {
+      endGame();
+      return;
+    }
+
+    // ぶつかった障害物を画面から取り除き、少しの間無敵にする
+    obstacles = [];
+    invincible = true;
+    setTimeout(() => { invincible = false; }, 1500);
+  }
+
+  function gameLoop() {
+    if (!gameRunning) return;
+    update();
+    draw();
+    animationId = requestAnimationFrame(gameLoop);
+  }
+
+  function startGame() {
+    resetGame();
+    overlay.classList.add('hidden');
+    gameRunning = true;
+
+    cancelAnimationFrame(animationId);
+    gameLoop();
+  }
+
+  function endGame() {
+    gameRunning = false;
+    cancelAnimationFrame(animationId);
+
+    if (score > highScore) {
+      highScore = score;
+      highScoreEl.textContent = highScore;
+    }
+
+    overlayTitle.textContent = 'ゲームオーバー';
+    overlay.querySelector('p').textContent = `スコア: ${score}`;
+    overlay.classList.remove('hidden');
+    startBtn.textContent = 'もう一度プレイ';
+    playGameOverSound();
+  }
+
+  // ---- キーボード操作 ----
+  document.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      jump();
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setDuck(true);
+    }
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'ArrowDown') {
+      setDuck(false);
+    }
+  });
+
+  startBtn.addEventListener('click', startGame);
+
+  // ---- タッチ操作 ----
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    jump();
+  }, { passive: false });
+
+  document.getElementById('btnJump').addEventListener('click', jump);
+
+  const duckBtn = document.getElementById('btnDuck');
+  duckBtn.addEventListener('touchstart', (e) => { e.preventDefault(); setDuck(true); }, { passive: false });
+  duckBtn.addEventListener('touchend', (e) => { e.preventDefault(); setDuck(false); }, { passive: false });
+  duckBtn.addEventListener('mousedown', () => setDuck(true));
+  duckBtn.addEventListener('mouseup', () => setDuck(false));
+  duckBtn.addEventListener('mouseleave', () => setDuck(false));
+
+  // ---- 効果音(Web Audio APIでその場合成) ----
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
+
+  function playTone(freq, duration, type = 'sine', startDelay = 0, volume = 0.13) {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = type;
+    osc.frequency.value = freq;
+
+    const startTime = ctx.currentTime + startDelay;
+    gain.gain.setValueAtTime(volume, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(startTime);
+    osc.stop(startTime + duration);
+  }
+
+  function playJumpSound() {
+    playTone(500, 0.1, 'triangle', 0, 0.12);
+  }
+
+  function playCrashSound() {
+    playTone(280, 0.12, 'sawtooth', 0, 0.15);
+    playTone(180, 0.16, 'sawtooth', 0.08, 0.15);
+  }
+
+  function playMilestoneSound() {
+    playTone(700, 0.08, 'sine', 0, 0.12);
+    playTone(900, 0.1, 'sine', 0.08, 0.12);
+  }
+
+  function playGameOverSound() {
+    [380, 300, 220, 140].forEach((freq, i) => {
+      playTone(freq, 0.25, 'sawtooth', i * 0.15, 0.15);
+    });
+  }
+
+  // 初期表示
+  resetGame();
+  draw();
+</script>
+
+</body>
+</html>
